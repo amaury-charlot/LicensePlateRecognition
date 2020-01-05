@@ -4,6 +4,7 @@ import os
 import pandas as pd
 import Localization
 import Recognize
+import matplotlib.pyplot as plt
 
 """
 In this file, you will define your own CaptureFrame_Process funtion. In this function,
@@ -20,8 +21,7 @@ Output: None
 """
 
 """FUNCTIONS"""
-
-#returns index of the selected contour
+# returns index of the selected contour
 def select_contours(contours):
     int_contour = []
     for ind, c in enumerate(contours):
@@ -33,6 +33,34 @@ def select_contours(contours):
     #print(final_contour)
     print(int_contour)
     return int_contour
+
+
+# ISODATA threshold finding method
+# Takes gray_scale image as input
+def isodata_threshold(img):
+    hist, bins = np.histogram(img.ravel(), 256, [0, 256])
+    hist = hist[:120]
+    t = [60]
+    i = 0
+    epsilon = 0.5
+    # first iteration
+    ginf = np.arange(0, t[0])
+    gsup = np.arange(t[0], 120)
+    m1 = np.average(ginf, weights=hist[:t[i]])
+    m2 = np.average(gsup, weights=hist[t[i]:])
+    t.append(int(np.average([m1, m2])))
+    i = 1
+
+    while np.abs(t[i-1]-t[i]) > epsilon:
+        ginf = np.arange(0, t[i])
+        gsup = np.arange(t[i], 120)
+        m1 = np.average(ginf, weights=hist[:t[i]])
+        m2 = np.average(gsup, weights=hist[t[i]:])
+        t.append(int(np.average([m1, m2])))
+        i += 1
+
+    print("threshold is : ", t[i])
+    return t[i]
 
 # Function to determine the optimal thresholds for edge detection
 # Still not used
@@ -51,20 +79,20 @@ def auto_canny(image, sigma=0.33):
 
 def yellow_mode(frame):
     # Blur the image to uniformize color of the plate
-    frame = cv2.GaussianBlur(frame, (5, 5), 0)
+    blur = cv2.GaussianBlur(frame, (3, 3), 0)
 
     # Convert to HSV color model
-    hsv_img = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    hsv_img = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
 
     # Keep only "yellow" parts of the image
     light_orange = (15, 60, 50)
     dark_orange = (35, 255, 220)
     mask = cv2.inRange(hsv_img, light_orange, dark_orange)
-    frame = cv2.bitwise_and(frame, frame, mask=mask)
+    masked = cv2.bitwise_and(frame, frame, mask=mask)
 
     # HSV to gray scale conversion
-    gray = cv2.cvtColor(frame, cv2.COLOR_HSV2BGR)
-    gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
+    #gray = cv2.cvtColor(frame, cv2.COLOR_HSV2BGR)
+    gray = cv2.cvtColor(masked, cv2.COLOR_BGR2GRAY)
 
     # Binarization
     (thresh, binary) = cv2.threshold(gray, 62, 255, cv2.THRESH_BINARY)
@@ -75,15 +103,29 @@ def yellow_mode(frame):
     # retrieve contours of the plate
     contours, hierarchy = cv2.findContours(edged, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
 
-    plate_image = Localization.plate_detection(gray, contours)
+    # Put original image in gray scale
+    gray_original = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    plate_image = Localization.plate_detection(gray_original, contours)
     cv2.imshow('Plate image', plate_image)
     cv2.waitKey(0)
 
-    plate_image = cv2.GaussianBlur(plate_image, (5, 5), 0)
+    #plate_image = cv2.GaussianBlur(plate_image, (5, 5), 0)
+    resize_factor = 85 / plate_image.shape[0]
+    dim = (int(plate_image.shape[1] * resize_factor), 85)
+    plate_image = cv2.resize(plate_image, dim, interpolation=cv2.INTER_LINEAR)
+    cv2.imshow('Resized plate', plate_image)
+    cv2.waitKey(0)
 
-    bin_plate = cv2.threshold(plate_image, 90, 255, cv2.THRESH_BINARY_INV)[1]
-    Recognize.segment_and_recognize(bin_plate)
-    return 0
+    # Find histogram of image intensity
+    """hist = cv2.calcHist(plate_image, [0], None, [256], [0, 256])
+    plt.plot(hist)
+    plt.show()"""
+    """plt.hist(plate_image.ravel(), 256, [0, 256])
+    plt.show()"""
+    T = isodata_threshold(plate_image)
+    bin_plate = cv2.threshold(plate_image, T, 255, cv2.THRESH_BINARY_INV)[1]
+    plate_number = Recognize.segment_and_recognize(bin_plate)
+    return plate_number
 
 
 def random_plate_mode(frame):
@@ -150,10 +192,7 @@ def random_plate_mode(frame):
 
 """CODE"""
 # def CaptureFrame_Process(file_path, sample_frequency, save_path):
-capture = cv2.VideoCapture('TrainingSet\Categorie I\Video2_2.avi')
-
-# Create txt file : record of the analyzed frames number
-file = open("record.txt", "w+")
+capture = cv2.VideoCapture("TrainingSet\Categorie I\Video3_2.avi")
 
 # parameters
 act_frame = 0
@@ -162,6 +201,7 @@ sample_frequency = 0.5  # frequency for choosing the frames to analyze
 
 # initialization
 ret, frame = capture.read()
+recognized_plates = []
 
 # display image to analyze (each 24 frames)
 while ret:
@@ -170,12 +210,13 @@ while ret:
     cv2.waitKey(0)  # gives enough time for image to be displayed
     mode = 0
     if ~mode:  # yellow plates
-        yellow_mode(frame)
+        recognized_plates.append([yellow_mode(frame), act_frame, act_frame/fps])
     else:  # other plate colours
         random_plate_mode(frame)
 
-    # Write txt file for recording of plate number
-    file.write("This is frame no %d\n" % act_frame)
+    # Write csv file (using pandas) to keep a record of plate number
+    df = pd.DataFrame(recognized_plates, columns=['License plate', 'Frame no.', 'Timestamp(seconds)'])
+    df.to_csv('record.csv', index=None)
 
     # Pass to next frame
     act_frame += 24
@@ -185,8 +226,8 @@ while ret:
 # release pointer in memory
 capture.release()
 
-# close file
-file.close()
+# Destroy all windows
+cv2.destroyAllWindows()
 
 
 

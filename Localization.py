@@ -99,25 +99,18 @@ def plate_detection(image, contours):
 		rect = cv2.minAreaRect(cnt)
 		box = cv2.boxPoints(rect)
 		box = np.int0(box)
-		# cv2.drawContours(image, [box], -1, (0, 0, 255), 2)
 		area = cv2.contourArea(box)
-		print(area)
 		if area > 2500:  # area < 2800
 			final_contours.append(box)
 
-	image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-	cv2.drawContours(image, final_contours, 0, (0, 255, 0), 2)
+	""" = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+	cv2.drawContours(image, final_contours, 0, (0, 255, 0), 1)
 	cv2.imshow('Localized', image)
 	cv2.waitKey(0)
 
-	image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+	image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)"""
 
 	# Finds the minimal rectangle that bounds the contour
-	# Explore function with tilted bounding rectangle
 	plate_img = four_point_transform(image, final_contours[0])
-	#x, y, w, h = cv2.boundingRect(final_contours[0])
-
-	# crop the rectangle to get only the plate.
-	#plate_img = image[y:y + h, x:x + w]
 
 	return plate_img
