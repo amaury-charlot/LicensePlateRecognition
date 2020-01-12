@@ -18,10 +18,30 @@ Hints:
 """
 
 def verify_plate(box):
-	width = box[3][0]-box[0][0]
-	height = box[0][0]-box[0][1]
-	aspect_ratio = width/height
-	return (width > 100)
+	rect = order_points(box)
+	(tl, tr, br, bl) = rect
+
+	# compute the width of the new image, which will be the
+	# maximum distance between bottom-right and bottom-left
+	# x-coordiates or the top-right and top-left x-coordinates
+	widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+	widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+	maxWidth = max(int(widthA), int(widthB))
+
+	# compute the height of the new image, which will be the
+	# maximum distance between the top-right and bottom-right
+	# y-coordinates or the top-left and bottom-left y-coordinates
+	heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+	heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+	maxHeight = max(int(heightA), int(heightB))
+
+	if maxWidth and maxHeight:
+		aspect_ratio = maxHeight/maxWidth
+	else:
+		aspect_ratio = 1
+	area = cv2.contourArea(box)
+	#print("area is : ", area, "aspect_ratio is :", aspect_ratio, "maxWidth is : ", maxWidth)
+	return (maxWidth > 100) and (aspect_ratio < 0.3) and (area > 2600)
 
 
 def order_points(pts):
@@ -82,8 +102,8 @@ def four_point_transform(image, pts):
 	# compute the perspective transform matrix and then apply it
 	M = cv2.getPerspectiveTransform(rect, dst)
 	warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
-	cv2.imshow('Localized', image)
-	cv2.waitKey(0)
+	#cv2.imshow('Localized', image)
+	#cv2.waitKey(0)
 
 	# return the warped image
 	return warped
@@ -99,18 +119,22 @@ def plate_detection(image, contours):
 		rect = cv2.minAreaRect(cnt)
 		box = cv2.boxPoints(rect)
 		box = np.int0(box)
-		area = cv2.contourArea(box)
-		if area > 2500:  # area < 2800
+		if verify_plate(box):  # area < 2800
 			final_contours.append(box)
+		i += 1
+
+	if not final_contours:
+		return None
 
 	""" = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
 	cv2.drawContours(image, final_contours, 0, (0, 255, 0), 1)
-	cv2.imshow('Localized', image)
-	cv2.waitKey(0)
-
+	
 	image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)"""
-
 	# Finds the minimal rectangle that bounds the contour
-	plate_img = four_point_transform(image, final_contours[0])
+	plate_img = []
+	for f_cnt in final_contours:
+		plate_img.append(four_point_transform(image, f_cnt))
+		cv2.imshow('Localized', plate_img[len(plate_img)-1])
+		cv2.waitKey(25)
 
 	return plate_img

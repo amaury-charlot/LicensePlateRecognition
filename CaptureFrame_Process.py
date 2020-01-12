@@ -7,7 +7,7 @@ import Recognize
 import matplotlib.pyplot as plt
 
 """
-In this file, you will define your own CaptureFrame_Process funtion. In this function,
+In this file, you will define your own CaptureFrame_Process function. In this function,
 you need three arguments: file_path(str type, the video file), sample_frequency(second), save_path(final results saving path).
 To do:
 	1. Capture the frames for the whole video by your sample_frequency, record the frame number and timestamp(seconds).
@@ -21,45 +21,65 @@ Output: None
 """
 
 """FUNCTIONS"""
-# returns index of the selected contour
-def select_contours(contours):
-    int_contour = []
-    for ind, c in enumerate(contours):
-        perimeter = cv2.arcLength(c, True)
-        if (perimeter > 300) & (perimeter < 600):
-            int_contour.append(ind)
-
-    #final_contour = np.asarray(int_contour)
-    #print(final_contour)
-    print(int_contour)
-    return int_contour
 
 
 # ISODATA threshold finding method
 # Takes gray_scale image as input
 def isodata_threshold(img):
     hist, bins = np.histogram(img.ravel(), 256, [0, 256])
-    hist = hist[:120]
-    t = [60]
-    i = 0
+    h = 1/8 * np.ones(8)
+    hist = np.convolve(h, hist)[:256]
+    """plt.plot(np.arange(len(hist)), hist)
+    plt.show()"""
+
+    N = len(hist)
+    T = 100
+    # Find inferior bound
+    s = 0
+    while ~((hist[s] <= T) & (hist[s + 1] > T)) & (s < N-2):
+        s += 1
+    tmin = s
+
+    # Find superior bound
+    s = N - 1
+    while ~((hist[s - 1] > T) & (hist[s] <= T)) & (s > 1):
+        s -= 1
+    tmax = s
+
+    #tmin = cond[0]
+    #tmax = cond[len(cond)-1]
+    #print(tmin, tmax)
+    t0 = int(np.average((tmin, tmax)))
+
+    t = [t0]
+    """while hist[t0] == 0:
+        t0 = int(np.average((t0, tmax)))
+    t = [t0]"""
+
+    #print(t0)
     epsilon = 0.5
     # first iteration
-    ginf = np.arange(0, t[0])
-    gsup = np.arange(t[0], 120)
-    m1 = np.average(ginf, weights=hist[:t[i]])
-    m2 = np.average(gsup, weights=hist[t[i]:])
+    ginf = np.arange(tmin, t[0])
+    gsup = np.arange(t[0], tmax)
+
+    if np.sum(hist[tmin:t[0]]) and np.sum(hist[t[0]:tmax]):
+        m1 = np.average(ginf, weights=hist[tmin:t[0]])
+        m2 = np.average(gsup, weights=hist[t[0]:tmax])
+    else:
+        plt.plot(np.arange(len(hist)), hist)
+        plt.show()
+
     t.append(int(np.average([m1, m2])))
     i = 1
 
     while np.abs(t[i-1]-t[i]) > epsilon:
-        ginf = np.arange(0, t[i])
-        gsup = np.arange(t[i], 120)
-        m1 = np.average(ginf, weights=hist[:t[i]])
-        m2 = np.average(gsup, weights=hist[t[i]:])
+        ginf = np.arange(tmin, t[i])
+        gsup = np.arange(t[i], tmax)
+        m1 = np.average(ginf, weights=hist[tmin:t[i]])
+        m2 = np.average(gsup, weights=hist[t[i]:tmax])
         t.append(int(np.average([m1, m2])))
         i += 1
 
-    print("threshold is : ", t[i])
     return t[i]
 
 # Function to determine the optimal thresholds for edge detection
@@ -79,23 +99,25 @@ def auto_canny(image, sigma=0.33):
 
 def yellow_mode(frame):
     # Blur the image to uniformize color of the plate
-    blur = cv2.GaussianBlur(frame, (3, 3), 0)
+    blur = cv2.GaussianBlur(frame, (9, 9), 0)
 
     # Convert to HSV color model
     hsv_img = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
 
     # Keep only "yellow" parts of the image
     light_orange = (15, 60, 50)
-    dark_orange = (35, 255, 220)
+    dark_orange = (37, 255, 220)
     mask = cv2.inRange(hsv_img, light_orange, dark_orange)
     masked = cv2.bitwise_and(frame, frame, mask=mask)
+    cv2.imshow("Masked", masked)
+    cv2.waitKey(10)
 
     # HSV to gray scale conversion
     #gray = cv2.cvtColor(frame, cv2.COLOR_HSV2BGR)
     gray = cv2.cvtColor(masked, cv2.COLOR_BGR2GRAY)
 
     # Binarization
-    (thresh, binary) = cv2.threshold(gray, 62, 255, cv2.THRESH_BINARY)
+    (thresh, binary) = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY)
 
     # edge detection
     edged = cv2.Canny(binary, 50, 100)
@@ -105,26 +127,47 @@ def yellow_mode(frame):
 
     # Put original image in gray scale
     gray_original = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    plate_image = Localization.plate_detection(gray_original, contours)
-    cv2.imshow('Plate image', plate_image)
-    cv2.waitKey(0)
+    plates = Localization.plate_detection(gray_original, contours)
 
-    #plate_image = cv2.GaussianBlur(plate_image, (5, 5), 0)
-    resize_factor = 85 / plate_image.shape[0]
-    dim = (int(plate_image.shape[1] * resize_factor), 85)
-    plate_image = cv2.resize(plate_image, dim, interpolation=cv2.INTER_LINEAR)
-    cv2.imshow('Resized plate', plate_image)
-    cv2.waitKey(0)
+    if plates is not None:
+        plate_number = []
+        for plate_image in plates:
+            resize_factor = 85 / plate_image.shape[0]
+            dim = (int(plate_image.shape[1] * resize_factor), 85)
+            plate_image = cv2.resize(plate_image, dim, interpolation=cv2.INTER_LINEAR)
 
-    # Find histogram of image intensity
-    """hist = cv2.calcHist(plate_image, [0], None, [256], [0, 256])
-    plt.plot(hist)
-    plt.show()"""
-    """plt.hist(plate_image.ravel(), 256, [0, 256])
-    plt.show()"""
-    T = isodata_threshold(plate_image)
-    bin_plate = cv2.threshold(plate_image, T, 255, cv2.THRESH_BINARY_INV)[1]
-    plate_number = Recognize.segment_and_recognize(bin_plate)
+            epsilon = 10
+            plate_image = plate_image[epsilon:plate_image.shape[0] - epsilon, epsilon:plate_image.shape[1] - epsilon]
+            plate_image = cv2.GaussianBlur(plate_image, (5, 5), 0)
+            cv2.imshow("plate_image", plate_image)
+            cv2.waitKey(25)
+
+            # Find histogram of image intensity
+            """hist = cv2.calcHist(plate_image, [0], None, [256], [0, 256])
+            plt.plot(hist)
+            plt.show()"""
+            """plt.hist(plate_image.ravel(), 256, [0, 256])
+            plt.show()"""
+
+            first_time = 0
+            intermediate_plate_number = None
+            while (first_time < 5) and (intermediate_plate_number is None):
+                if first_time == 0:
+                    T = isodata_threshold(plate_image)  # Find threshold using ISODATA algorithm
+                    bin_plate = cv2.threshold(plate_image, T, 255, cv2.THRESH_BINARY_INV)[1]
+                    first_time += 1
+                else:
+                    T = T - 20
+                    bin_plate = cv2.threshold(plate_image, T, 255, cv2.THRESH_BINARY_INV)[1]
+                    first_time += 1
+                cv2.imshow("bin_plate", bin_plate)
+                cv2.waitKey(10)
+                intermediate_plate_number = Recognize.segment_and_recognize(bin_plate)
+            plate_number.append(intermediate_plate_number)
+
+    else:
+        plate_number = None
+
     return plate_number
 
 
@@ -157,7 +200,7 @@ def random_plate_mode(frame):
 
     plate_image = Localization.plate_detection(binary, contours)
     cv2.imshow('Plate image', plate_image)
-    cv2.waitKey(0)
+    cv2.waitKey(10)
 
     Recognize.segment_and_recognize(plate_image)
 
@@ -191,8 +234,9 @@ def random_plate_mode(frame):
 
 
 """CODE"""
-# def CaptureFrame_Process(file_path, sample_frequency, save_path):
-capture = cv2.VideoCapture("TrainingSet\Categorie I\Video3_2.avi")
+#def CaptureFrame_Process(file_path, sample_frequency, save_path):
+file_path = "TrainingVideo.avi" # "TrainingSet/Categorie III/Video47_2.avi"  #
+capture = cv2.VideoCapture(file_path)
 
 # parameters
 act_frame = 0
@@ -207,16 +251,20 @@ recognized_plates = []
 while ret:
     # Show actual frame
     cv2.imshow('Frame', frame)
-    cv2.waitKey(0)  # gives enough time for image to be displayed
+    cv2.waitKey(10)  # gives enough time for image to be displayed
     mode = 0
     if ~mode:  # yellow plates
-        recognized_plates.append([yellow_mode(frame), act_frame, act_frame/fps])
+        plates = yellow_mode(frame)
+        if plates != None:
+            for ind in range(len(plates)):
+                recognized_plates.append([plates[ind], act_frame, act_frame/fps])
     else:  # other plate colours
         random_plate_mode(frame)
 
     # Write csv file (using pandas) to keep a record of plate number
     df = pd.DataFrame(recognized_plates, columns=['License plate', 'Frame no.', 'Timestamp(seconds)'])
-    df.to_csv('record.csv', index=None)
+    save_path = 'record.csv'
+    df.to_csv(save_path, index=None)  # 'record.csv'
 
     # Pass to next frame
     act_frame += 24
@@ -228,6 +276,10 @@ capture.release()
 
 # Destroy all windows
 cv2.destroyAllWindows()
+
+# Execute evaluation.py
+command = "python evaluation.py --file_path record.csv --ground_truth_path groundTruth.csv"
+os.system(command)
 
 
 
