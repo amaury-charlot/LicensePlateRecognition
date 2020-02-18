@@ -4,21 +4,6 @@ import os
 import matplotlib.pyplot as plt
 from scipy.signal import correlate2d
 
-"""
-In this file, you will define your own segment_and_recognize function.
-To do:
-	1. Segment the plates character by character
-	2. Compute the distances between character images and reference character images(in the folder of 'SameSizeLetters' and 'SameSizeNumbers')
-	3. Recognize the character by comparing the distances
-Inputs:(One)
-	1. plate_imgs: cropped plate images by Localization.plate_detection function
-	type: list, each element in 'plate_imgs' is the cropped image(Numpy array)
-Outputs:(One)
-	1. recognized_plates: recognized plate characters
-	type: list, each element in recognized_plates is a list of string(Hints: the element may be None type)
-Hints:
-	You may need to define other functions.
-"""
 
 lookup_table = {
 	"0": "B", "1": "D", "2": "F", "3": "G", "4": "H",
@@ -30,43 +15,48 @@ lookup_table = {
 }
 
 
-# T is the threshold to identify the transition between blank and characters region
 def find_vertical_bounds(hp, T):
+	"""
+	Finds the upper and lower bounds of the characters' zone on the plate based on threshold value T
+	:param hp: horizontal projection (axis=1) of the plate image pixel intensities
+	:param T: Threshold value for bound detection
+	:return: upper and lower bounds
+	"""
+
 	N = len(hp)
-	# Find inferior bound
+
+	# Find lower bound
 	i = 0
 	while ~((hp[i] <= T) & (hp[i+1] > T)) & (i < int(N/2)):
 		i += 1
-	inf_bound = 0 if i == int(N/2) else i
+	lower_bound = 0 if i == int(N/2) else i
 
 	# Find superior bound
 	i = N-1
 	while ~((hp[i-1] > T) & (hp[i] <= T)) & (i > int(N/2)):
 		i -= 1
-	sup_bound = i
+	upper_bound = i
 
-	"""inf_array = horizontal_project[:int(N/2)]
-	inf_bound = np.argmin(inf_array)
-	sup_array = horizontal_project[int(N/2):N-1]
-	sup_bound = int(N/2) + np.argmin(sup_array)"""
-
-	return [inf_bound, sup_bound]
+	return [lower_bound, upper_bound]
 
 
-def find_horizontal_bounds(vertical_projection):
-	N = len(vertical_projection)
-	bool_bounds = (vertical_projection >= 2000)
+def find_horizontal_bounds(vp, T):
+	"""
+	Find bounds for each character on the plate for further segmentation of the characters based on threshold T.
+	:param vp: Vertical projection (axis=0) of the plate image pixel intensities
+	:return: List containing all characters' bounds
+	"""
+	N = len(vp)
+	bool_bounds = (vp >= T)
 	start_ind = 0
 	end_ind = 1
 	bounds = []
 	for b in range(N-1):
-		if bool_bounds[end_ind] & ~bool_bounds[start_ind]:  # upwards transition
+		if bool_bounds[end_ind] & ~bool_bounds[start_ind]:  # search for upwards transition
 			bounds.append(end_ind)
 			last_bound = bounds[len(bounds) - 1]
 			if end_ind - last_bound >= 99:
 				bounds.append(last_bound + 98)
-		# elif ~bool_bounds[end_ind] & bool_bounds[start_ind]: # Downwards transition
-			# bounds.append(start_ind)
 		start_ind += 1
 		end_ind += 1
 
@@ -77,35 +67,46 @@ def find_horizontal_bounds(vertical_projection):
 			bounds.append(end_ind)
 		else:
 			bounds.append(last_bound + 98)
+
+	# Return all characters' bounds
 	return bounds
 
 
 def find_all_indexes(input_str, search_str):
-    l1 = []
-    length = len(input_str)
-    index = 0
-    while index < length:
-        i = input_str.find(search_str, index)
-        if i == -1:
-            return l1
-        l1.append(i)
-        index = i + 1
-    return l1
+	"""
+	Searches for substring/character in input_str
+	:param input_str: String in which to search substring
+	:param search_str: Substring to be searched
+	:return: Indexes of all substring matching position
+	"""
+	l1 = []
+	length = len(input_str)
+	index = 0
+	while index < length:
+		i = input_str.find(search_str, index)
+		if i == -1:
+			return l1
+		l1.append(i)
+		index = i + 1
+	return l1
 
 
 def divide_characters(image, bounds):
+	"""
+	Extracts each characters, identify them and compose the full license plate number
+	:param image: plate image
+	:param bounds: bounds for each characters
+	:return: license plate number
+	"""
 	N = len(bounds)
 	plate_number = ""
-	# compute_dft(test_char)  # dft of the character image
+
 	for i in range(N-1):
-		#filename = "Characters/character_" + str(i) + ".jpg"
-		character_image = image[:, bounds[i]:bounds[i+1]]
-		#cv2.imwrite(filename, character_image)
-		plate_number = plate_number + match_characters(character_image)
-		#compute_dft(character_image)
+		character_image = image[:, bounds[i]:bounds[i+1]] # extract each character based on their bounds
+		plate_number = plate_number + match_characters(character_image) # Compose full license plate
 	
-	# Check for problems with "-" character
-	indexes = find_all_indexes(plate_number, "-")
+	# Check for issues with "-" character
+	indexes = find_all_indexes(plate_number, "-") # Find indexes of all occurence of "-" in plate_number string
 	N = len(indexes)
 	M = len(plate_number)
 	if N:
@@ -121,52 +122,60 @@ def divide_characters(image, bounds):
 		if indexes[i] == indexes[i+1] - 1:
 			return None
 
+	# Return the final plate number
 	return plate_number
 
 
 def match_characters(character_image):
-	# show image
-	#cv2.imshow('match', character_image)
-	#cv2.waitKey(0)
+	"""
+	Match each character extracted with the ones from the training set.
+	Compute a score for each character tested and keep the one with the highest score.
+	:param character_image: image of a character extracted from the plate
+	:return: character matched
+	"""
 
 	character_image_width = character_image.shape[1]
 	score = np.zeros(28)
 	intermediate_score = []
 
-	if character_image_width <= 98:
+	if character_image_width <= 98: # Check if character image is thinner than characters in the training set
 		# Compute scores for Letters
 		for i in range(17):
 			file_path = "SameSizeLetters/" + str(i+1) + ".bmp"
-			test_char = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
+			test_char = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE) # Read training set characters
 			test_character_width = test_char.shape[1]
-			normalize_coef = test_char.shape[0] * character_image_width * 255
-			#crop_tc = test_char[:, :character_image_width]
-			for start in range(min([test_character_width - character_image_width - 1, 2])):
+			normalize_coef = test_char.shape[0] * character_image_width * 255 # Coef to normalize final score so that 0 < score < 1
+			for start in range(min([test_character_width - character_image_width - 1, 2])): # Slide character image over test character
 				crop_tc = test_char[:, start:start + character_image_width]
 				#cv2.imshow('match', cv2.bitwise_not(cv2.bitwise_xor(crop_tc, character_image)))
 				#cv2.waitKey(25)
+
+				# Score is obtained by summing the result of bitwise NXOR operations between pixels in both images
+				# NXOR returns a 1 when two pixels are the same and 0 when pixels are different
+				# We then normalized the score by the score we would have obtained in the case of a perfect fit
 				intermediate_score.append(np.sum(cv2.bitwise_not(cv2.bitwise_xor(crop_tc, character_image)))/normalize_coef)
+
+			# Score for test character i is the max of scores for each sliding position over the test character
 			score[i] = max(intermediate_score)
-			#score[i] = np.sum(cv2.bitwise_not(cv2.bitwise_xor(crop_tc, character_image)))/normalize_coef
 			intermediate_score.clear()
 
-		# Compute scores for Numbers
+		# Compute scores for Numbers (same operation as for letters)
 		for i in range(10):
 			file_path = "SameSizeNumbers/" + str(i) + ".bmp"
 			test_char = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
 			test_character_width = test_char.shape[1]
 			normalize_coef = test_char.shape[0] * character_image_width * 255
-			#crop_tc = test_char[:, :character_image_width]
 			for start in range(min([test_character_width - character_image_width - 1, 2])):
 				crop_tc = test_char[:, start:start + character_image_width]
 				#cv2.imshow('match', cv2.bitwise_not(cv2.bitwise_xor(crop_tc, character_image)))
 				#cv2.waitKey(25)
 				intermediate_score.append(np.sum(cv2.bitwise_not(cv2.bitwise_xor(crop_tc, character_image)))/normalize_coef)
 			score[17 + i] = max(intermediate_score)
-			#score[17 + i] = np.sum(cv2.bitwise_not(cv2.bitwise_xor(crop_tc, character_image)))/normalize_coef
 			intermediate_score.clear()
 
 		# Test for bar character
+		# Instead of sliding horizontally, the bar character is slid vertically
+		# This is to prevent the case where bar characters are position at different heights
 		test_char = create_bar_character(character_image.shape, 10, 15)  # bar character
 		test_character_height = test_char.shape[0]
 		normalize_coef = character_image.shape[0] * character_image_width * 255
@@ -178,6 +187,7 @@ def match_characters(character_image):
 		score[27] = max(intermediate_score)
 		intermediate_score.clear()
 
+		# Supplemental check to be sure character image is a real character
 		sum_pix = np.sum(character_image)
 		if sum_pix < 40000:
 			return ""
@@ -191,21 +201,30 @@ def match_characters(character_image):
 
 
 def create_bar_character(img_shape, bar_thickness, bar_width):
-	# Check for special characters i.e. blank or bar
+	"""
+	Creates the image of a bar character
+	:param img_shape: shape of the character to synthesize (height, width)
+	:param bar_thickness: Thickness of the bar [pixels]
+	:param bar_width: Width of the bar [pixels]
+	:return: bar character image
+	"""
 	ch_height = img_shape[0] + 50
 	ch_width = img_shape[1]
 	bar = np.zeros((ch_height, ch_width), np.uint8)
 	bart_init = int(ch_height / 2) - int(bar_thickness / 2)
 	bart_end = bart_init + bar_thickness
-	#barw_init = int(ch_width / 2) - int(bar_width / 2)
 	barw_init = 0
 	barw_end = barw_init + bar_width
 	bar[bart_init:bart_end, barw_init:barw_end] = 255 * np.ones([bar_thickness, min((bar_width, ch_width))])
 	return bar
 
 
-# This function takes a gray_scale image as input
 def compute_dft(img):
+	"""
+	Computes the dft of a gray scale image. Not used in the software.
+	:param img: gray scale image
+	:return: dft of image
+	"""
 	dft = cv2.dft(np.float32(img), flags=cv2.DFT_COMPLEX_OUTPUT)  # compute dft of a gray_scale image
 	dft_shift = np.fft.fftshift(dft)  # shift zero frequency from top left corner to center of the image
 	magnitude_spectrum = 20 * np.log(cv2.magnitude(dft_shift[:, :, 0], dft_shift[:, :, 1]))
@@ -217,10 +236,13 @@ def compute_dft(img):
 	plt.show()
 
 
-# This function aims to clean the pixels close to the borders of the plate image (should be gray_scaled)
-# epsilon is the width of the cleaning zone around the borders
-# epsilon = (epsilon_h, epsilon_w)
 def clean_borders(plate_image, epsilon):
+	"""
+	This function aims to clean the pixels close to the borders of the plate image.
+	:param plate_image: plate image (gray scaled)
+	:param epsilon: width of the cleaning zone around the borders (epsilon_h, epsilon_w)
+	:return: cleaned plate image
+	"""
 	height = plate_image.shape[0]
 	width = plate_image.shape[1]
 
@@ -232,24 +254,23 @@ def clean_borders(plate_image, epsilon):
 	return plate_image
 
 
-""" MAIN Function """
 def segment_and_recognize(plate_img):
-	# Maybe implement erosion or dilatation techniques to improve recognition
-	# Explore connected components analysis
-
+	"""
+	Segment the plate and Recognize each character.
+	:param plate_img: image of the plate to be analyzed
+	:return: license plate number recognized
+	"""
 	# Clean image borders
-	plate_img = clean_borders(plate_img, (4, 7))
+	plate_img = clean_borders(plate_img, (4, 7)) # perfect was (4,7)
 
 	# dilatation (to close gaps in the letters)
 	kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
 	plate_img = cv2.dilate(plate_img, kernel, iterations=1)
 	#plate_img = cv2.morphologyEx(plate_img, cv2.MORPH_CLOSE, kernel)
-	#cv2.imshow('Clean borders', plate_img)
-	#cv2.waitKey(0)
 
-	# Perform projections
+	# Find vertical bounds
 	horizontal_project = np.sum(plate_img, axis=1)
-	vertical_bounds = find_vertical_bounds(horizontal_project, 16800)  # 2nd argument is the threshold to detect bounds
+	vertical_bounds = find_vertical_bounds(horizontal_project, 16800)
 
 	# crop the upper and lower boundaries
 	new_plate = plate_img[vertical_bounds[0]+1:vertical_bounds[1]][:]
@@ -259,9 +280,9 @@ def segment_and_recognize(plate_img):
 	dim = (int(new_plate.shape[1]*resize_factor), 85)
 	new_plate = cv2.resize(new_plate, dim, interpolation=cv2.INTER_LINEAR)
 
-	# perform projections
+	# Find characters horizontal bounds
 	vertical_project = np.sum(new_plate, axis=0)
-	horizontal_bounds = find_horizontal_bounds(vertical_project)
+	horizontal_bounds = find_horizontal_bounds(vertical_project, 2000)
 	if len(horizontal_bounds) < 6:  # 6 bounds = 5 characters, no plate has usually less than 5 characters
 		return None
 
@@ -273,20 +294,24 @@ def segment_and_recognize(plate_img):
 	new_plate = cv2.cvtColor(new_plate, cv2.COLOR_GRAY2BGR)
 
 	# draw bounding lines
-	for bnd in vertical_bounds:
-		plate_img = cv2.line(plate_img, (0, img_height-bnd), (img_width, img_height-bnd), (160, 0, 0), 1)
 	for bnd in horizontal_bounds:
 		new_plate = cv2.line(new_plate, (bnd, 0), (bnd, img_height), (0, 255, 0), 1)
-
 	cv2.imshow('Plate image', new_plate)
 	cv2.waitKey(25)
 
-	# afficher les projections horizontales et verticales
-	"""xx = np.arange(len(horizontal_project))
-	plt.plot(xx, horizontal_project)
+	# Display horizontal and vertical projections
+	"""xx = np.arange(len(vertical_project))
+	plt.figure(figsize=(20, 3))
+	color = (214/255, 39/255, 40/255)
+	plt.plot(xx, vertical_project, color=color)
+	#ax = plt.gca()
+	#ax.set_ylim(ax.get_ylim()[::-1])
 	plt.show()"""
 
+	# Change back from BGR to Gray scale
 	new_plate = cv2.cvtColor(new_plate, cv2.COLOR_BGR2GRAY)
-	plate_number = divide_characters(new_plate, horizontal_bounds)
 
+	# Divide and match all characters in the plate
+	plate_number = divide_characters(new_plate, horizontal_bounds)
+	# Return the plate number
 	return plate_number
